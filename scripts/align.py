@@ -132,6 +132,8 @@ def build_sentences(segments):
     for seg in segments:
         words = seg.get("words") or []
         if not words:
+            emit()
+            cur = {"words": [], "text": ""}
             emit2 = {"start": seg["start"], "end": seg["end"],
                      "w_start": seg["start"], "w_end": seg["end"],
                      "last_w_start": seg["start"] - 0.30,
@@ -141,10 +143,10 @@ def build_sentences(segments):
         for w in words:
             cur["words"].append(w)
             cur["text"] = (cur["text"] + " " + w["w"]).strip()
-            # 句末判定：中英文句末标点；至少 2 个词（中文按词块）或 3 个英文词
-            if re.search(r"[.!?。！？]$", w["w"]) and (
-                len(cur["words"]) >= 2 or len(re.sub(f"[{CJK}]", " ", cur["text"]).split()) >= 3
-            ):
+            # 单词回答（Yes./No.）也单独成句；常见称谓缩写与题号不作句末。
+            abbreviation = re.fullmatch(r"(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St)\.", w["w"], re.I)
+            prefix = re.fullmatch(r"(?:[A-Z]|Q?\d+)\.", w["w"])
+            if re.search(r"[.!?。！？][\"'”’]*$", w["w"]) and not abbreviation and not prefix:
                 emit()
                 cur = {"words": [], "text": ""}
     emit()

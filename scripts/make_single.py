@@ -72,11 +72,15 @@ def main():
 
     d = common.load_sentences(args.work)
     sents = d["sentences"]
+    if not sents:
+        raise ValueError("句子时间轴为空，无法生成精听网页")
 
     # 续传：成品比所有输入都新时没必要重做（要强制重生成加 --restart）
     OUT = common.P(args.work, args.out or f"{common.slug(args.title)}（单文件版）.html")
     if not args.restart and os.path.exists(OUT):
-        deps = [common.P(args.work, "sentences.json"), common.P(args.work, "translations.json")]
+        deps = [common.P(args.work, "sentences.json"), common.P(args.work, "translations.json"),
+                common.P(args.work, "sections.json"), args.audio, __file__,
+                common.P(os.path.dirname(__file__), "page_tpl.py"), common.__file__]
         deps = [p for p in deps if os.path.exists(p)]
         if deps and all(os.path.getmtime(OUT) >= os.path.getmtime(p) for p in deps):
             print(f"{os.path.basename(OUT)} 已是最新，跳过"
@@ -98,7 +102,7 @@ def main():
     n_tr = sum(1 for i in range(1, len(sents) + 1) if tr.get(i))
     parts = [f"共 {len(sents)} 句", f"原音频总长 {mmss(d['duration'])}"]
     if official:
-        parts.append(f"{official} 句已与官方原文逐句校对")
+        parts.append(f"{official} 句已与提供的原文自动对齐")
     if n_tr:
         parts.append(f"{n_tr} 句配有中文译文")
     parts.append("音频全部内嵌，单文件可独立播放")
@@ -117,10 +121,11 @@ def main():
             name = SECTION_CN.get(sec, sec)
             nav.append(f'<a href="#{anchor}">{esc(name)}</a>')
             if rows:
+                rows.append("</tbody></table>")
                 rows.append(f'<div class="secnav"><button class="secplay2" '
                             f'data-a="{sec_start}" data-b="{i-1}">▶ 连播本板块'
                             f'（{sec_start}–{i-1}）</button></div>')
-                rows.append("</tbody></table></section>")
+                rows.append("</section>")
             sec_start = i
             rows.append(
                 f'<section class="grp" id="{anchor}"><h2 data-sec="{esc(name)}">'
@@ -148,15 +153,15 @@ def main():
         )
         if i % 40 == 0:
             print(f"  编码 {i}/{len(sents)}", flush=True)
+    rows.append("</tbody></table>")
     rows.append(f'<div class="secnav"><button class="secplay2" data-a="{sec_start}" '
                 f'data-b="{len(sents)}">▶ 连播本板块（{sec_start}–{len(sents)}）</button></div>')
-    rows.append("</tbody></table></section>")
+    rows.append("</section>")
 
     print(f"  音频内嵌 {sum(len(c) for c in clips)/1024/1024:.1f}MB (base64)", flush=True)
 
     # localStorage 键：同一份材料稳定不变，不同材料互不串味
-    store_key = "lsi_" + re.sub(r"[^0-9A-Za-z]+", "_", args.title).strip("_")[:40] \
-        + "_" + str(len(sents))
+    store_key = common.storage_key(args.title, sents)
 
     html = HEAD.replace('<div class="sub2" id="meta"></div>',
                         f'<div class="sub2">{esc(meta)}</div>')

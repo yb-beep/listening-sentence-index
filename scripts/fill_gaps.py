@@ -16,16 +16,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # noqa: E402
 import common  # noqa: E402
 
 from faster_whisper import WhisperModel  # noqa: E402
+from transcribe import MODEL_ALIAS  # noqa: E402
 
 
 def voice_regions(mono, sr, thresh=0.008, min_dur=0.8, pad=0.15):
     """返回 [(start, end)]，单位为秒"""
     w = int(sr * 0.02)
+    hop = w / sr
     n = len(mono) // w
+    if not n:
+        return []
     rms = np.sqrt((mono[:n * w].reshape(n, w) ** 2).mean(axis=1))
     hot = rms > thresh
     # 膨胀，把零星的低能量帧也并进来
-    k = int(0.25 / 0.02)
+    k = min(n, int(0.25 / hop))
     hot = np.convolve(hot.astype(float), np.ones(k), mode="same") > 0.5
     regions = []
     i = 0
@@ -34,8 +38,8 @@ def voice_regions(mono, sr, thresh=0.008, min_dur=0.8, pad=0.15):
             j = i
             while j < n and hot[j]:
                 j += 1
-            st = max(0.0, i * 0.02 - pad)
-            en = min(len(mono) / sr, j * 0.02 + pad)
+            st = max(0.0, i * hop - pad)
+            en = min(len(mono) / sr, j * hop + pad)
             if en - st >= min_dur:
                 regions.append((st, en))
             i = j
@@ -63,18 +67,19 @@ def uncovered(regions, sents, min_len=1.2):
     return out
 
 
-def write_wav(data, sr, start, end, path):
+def write_wav(data, sr, start, end, path, layout=None):
     i0 = max(0, int(start * sr))
     i1 = min(data.shape[1], int(end * sr))
     seg = data[:, i0:i1]
+    layout = layout or ("mono" if data.shape[0] == 1 else "stereo")
     out = av.open(path, "w")
     st = out.add_stream("pcm_s16le", rate=sr)
-    st.layout = "stereo"
+    st.layout = layout
     fs = 1024
     n = seg.shape[1]
     for k in range(0, n, fs):
         block = seg[:, k:k + fs]
-        frame = av.AudioFrame.from_ndarray(block, format="s16p", layout="stereo")
+        frame = av.AudioFrame.from_ndarray(block, format="s16p", layout=layout)
         frame.sample_rate = sr
         frame.time_base = st.time_base
         for p in st.encode(frame):
@@ -103,12 +108,12 @@ def main():
         return
 
     os.makedirs(TMP, exist_ok=True)
-    model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=8)
+    model = WhisperModel(MODEL_ALIAS.get(args.model, args.model), device="cpu", compute_type="int8", cpu_threads=8)
 
     added = []
     for i, (a, b) in enumerate(gaps):
         wav = f"{TMP}/gap{i:03d}.wav"
-        write_wav(data, sr, a, b, wav)
+        write_wav(data, sr, a, b, wav, _layout)
         segs, _ = model.transcribe(
             wav, language=args.lang, beam_size=5, vad_filter=True,
             condition_on_previous_text=False, word_timestamps=True,

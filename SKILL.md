@@ -63,7 +63,7 @@ python scripts/make_single.py --work ./out --restart
 
 ## 中断与重新生成
 
-`transcribe.py` 按音频块记进度，可重跑同一条命令接着转写。`split.py` 沿用已存在的片段；改变时间轴后需重新生成相关输出，避免旧片段残留。
+`transcribe.py` 按音频块记进度，可重跑同一条命令接着转写。`split.py` 核对片段边界、源音频与代码更新时间，匹配时复用，变化时重新切分。
 
 完整流水线续跑：
 
@@ -71,7 +71,7 @@ python scripts/make_single.py --work ./out --restart
 python scripts/run_all.py --work ./out --resume
 ```
 
-`--restart` 忽略已有产物或进度，使用前判断是否需要保留用户已有修改。更换源音频或上游内容后，重新处理受影响的下游步骤。
+`--restart` 忽略已有产物或进度，使用前判断是否需要保留用户已有修改。流水线检测到源音频、参考原文或识别设置变化时会重新制作，旧译文保存到 `_previous_inputs/`。仍建议每份材料使用独立目录，避免混用素材。
 
 `run_all.py` 当前只接收它定义的参数；`--limit`、`--jobs`、`--batch-size` 等应传给支持它们的分步脚本。默认识别模型 `large-v3-turbo`，默认并行度 2；处理速度与质量取决于硬件和材料。
 

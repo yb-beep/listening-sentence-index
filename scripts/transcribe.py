@@ -26,7 +26,7 @@ import common  # noqa: E402
 from faster_whisper import WhisperModel  # noqa: E402
 
 TARGET = 45.0   # 每块目标时长（秒）
-MAXLEN = 90.0   # 单块硬上限，避免静音极少的连读撑出巨块
+MAXLEN = 90.0   # 常规单块上限；不足半秒的尾部并入末块，避免漏音
 MINSIL = 0.20   # 允许下刀的最短静音（秒）
 
 # 模型别名。turbo 是 large-v3 的蒸馏版：CPU 上比 large-v3 快 5~8 倍，
@@ -71,7 +71,7 @@ def plan_chunks(pcm, sr, target=TARGET, maxlen=MAXLEN, minsil=MINSIL):
     need = max(1, int(minsil / win))
     chunks = []
     start = 0.0
-    while start < dur - 0.5:
+    while start < dur:
         i0 = int((start + target) / win)
         i1 = min(len(rms), int((start + maxlen) / win))
         cut = None
@@ -92,9 +92,11 @@ def plan_chunks(pcm, sr, target=TARGET, maxlen=MAXLEN, minsil=MINSIL):
         if cut is None or cut <= start + 1.0:
             cut = min(dur, start + maxlen)
         cut = min(cut, dur)
+        if dur - cut < 0.5:
+            cut = dur
         chunks.append((round(start, 3), round(cut, 3)))
         start = cut
-        if cut >= dur - 0.5:
+        if cut >= dur:
             break
     return chunks
 
@@ -154,7 +156,7 @@ def main():
     a = common.get_args("转写音频为带词级时间戳的 JSON（支持断点续传）")
     prog_path = common.P(a.work, "transcribe_progress.json")
     partial = common.P(a.work, "segments_raw.jsonl")
-    final = a.out or common.P(a.work, "segments_raw.json")
+    final = common.P(a.work, a.out or "segments_raw.json")
     restart = a.restart
     limit = a.limit
 
@@ -167,10 +169,12 @@ def main():
           f"{duration/max(1,len(chunks)):.0f}s/块）", flush=True)
 
     sig = {"audio": a.audio, "size": os.path.getsize(a.audio),
-           "duration": round(duration, 3), "n_chunks": len(chunks), "model": a.model}
+           "mtime_ns": os.stat(a.audio).st_mtime_ns,
+           "duration": round(duration, 3), "n_chunks": len(chunks), "model": a.model,
+           "lang": a.lang, "prompt": os.environ.get("LSI_PROMPT", DEFAULT_PROMPT)}
     prog = load_progress(prog_path)
     done = 0
-    if prog and not restart and prog.get("sig") == sig:
+    if prog and os.path.exists(partial) and not restart and prog.get("sig") == sig:
         done = min(int(prog.get("done", 0)), len(chunks))
         if done:
             print(f"  发现上次进度：已完成 {done}/{len(chunks)} 块，从第 {done+1} 块继续"
@@ -179,7 +183,27 @@ def main():
         if prog and restart:
             print("  --restart：丢弃旧进度", flush=True)
         open(partial, "w", encoding="utf-8").close()
-        prog = {"sig": sig, "done": 0}
+        prog = {"sig": sig, "done": 0, "committed_bytes": 0}
+
+    # 崩溃可能发生在写入一块的结果后、提交进度前。截去未提交的尾部，
+    # 避免续跑把这一块重复写入；同时移除旧的完成标记，防止下游误用旧文件。
+    if "committed_bytes" in prog:
+        if os.path.getsize(partial) < prog["committed_bytes"]:
+            done = 0
+            prog.update(done=0, committed_bytes=0)
+        with open(partial, "r+b") as fh:
+            fh.truncate(prog["committed_bytes"])
+    if os.path.exists(final):
+        os.remove(final)
+
+    def commit_progress(fh, completed):
+        fh.flush()
+        prog["done"] = completed
+        prog["committed_bytes"] = os.path.getsize(partial)
+        temp = prog_path + ".tmp"
+        with open(temp, "w", encoding="utf-8") as pf:
+            json.dump(prog, pf, ensure_ascii=False, indent=1)
+        os.replace(temp, prog_path)
 
     model_path = MODEL_ALIAS.get(a.model, a.model)
     jobs = max(1, int(getattr(a, "jobs", 1) or 1))
@@ -232,9 +256,7 @@ def main():
                         fh.write(json.dumps(r, ensure_ascii=False) + "\n")
                     fh.flush()
                     wrote += len(rows)
-                    prog["done"] = max(prog["done"], k + 1)
-                    with open(prog_path, "w", encoding="utf-8") as pf:
-                        json.dump(prog, pf, ensure_ascii=False, indent=1)
+                    commit_progress(fh, k + 1)
                     finished += 1
                     s0, e0 = chunks[k]
                     print(f"  块 {k+1}/{len(chunks)}  [{s0:.0f}s-{e0:.0f}s] -> "
@@ -271,9 +293,7 @@ def main():
                     cnt += 1
                 fh.flush()
                 wrote += cnt
-                prog["done"] = k + 1
-                with open(prog_path, "w", encoding="utf-8") as pf:
-                    json.dump(prog, pf, ensure_ascii=False, indent=1)
+                commit_progress(fh, k + 1)
                 print(f"  块 {k+1}/{len(chunks)}  [{s:.0f}s-{e:.0f}s] -> {cnt} 段"
                       f"  ({time.time()-t0:.0f}s elapsed)", flush=True)
 

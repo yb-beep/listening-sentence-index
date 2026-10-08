@@ -38,7 +38,7 @@ def main():
                 if str(v).strip():
                     tr[int(k)] = str(v).strip()
     missing = [i for i in range(1, n + 1) if not tr.get(i)]
-    if "--check" in sys.argv:
+    if a.check:
         print(f"共 {n} 句，已译 {n - len(missing)} 句，缺 {len(missing)} 句")
         print("缺少的序号：", missing[:200], "…" if len(missing) > 200 else "")
         return

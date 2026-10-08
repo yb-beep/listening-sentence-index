@@ -284,7 +284,7 @@ function save(){
   saveTimer = setTimeout(()=>{
     try{
       localStorage.setItem(KEY, JSON.stringify({
-        mode:document.body.className.split(' ')[0].replace('m-',''),
+        mode:MODE[mi],
         rate:$id('rate').value, gap:$id('gap').value, rep:$id('repeat').value,
         autoRev:$id('autoRev').checked, from:+($id('fromN').value||1), to:+($id('toN').value||1),
         loop:loopRng, grpSize:$id('grpSize').value, grpRep:$id('grpRep').value,
@@ -331,7 +331,7 @@ function toggleStar(i){
   const on = !ROWS[i].classList.contains('star');
   ROWS[i].classList.toggle('star',on);
   if(on) ST.star.add(i); else ST.star.delete(i);
-  save(); updProg();
+  save(); applyFilter();
 }
 
 /* ---------- 范围 ---------- */
@@ -360,40 +360,45 @@ function sectionRange(a,b){          // 板块标题上的播放键
 }
 
 /* ---------- 连播状态机 ---------- */
+function playableIndices(inRange=false){
+  return ROWS.map((r,i)=>({r,i})).filter(({r,i})=>!r.classList.contains('hide') &&
+    (!inRange || (i>=rngFrom && i<=rngTo))).map(({i})=>i);
+}
 function nextIndex(){
   if(mode==='once') return -1;
-  const lim = (mode==='all') ? NROW-1 : rngTo;
-  if(cur+1<=lim){
-    if(grpN()>1){
-      const pos = cur-grpStart+1;
-      if(pos<grpN()) return cur+1;
-      grpPlayed++;
-      if(grpPlayed<grpR()) return grpStart;
-      grpStart=cur+1; grpPlayed=0; return grpStart;
-    }
-    return cur+1;
+  const ids=playableIndices(mode==='range');
+  const pos=ids.indexOf(cur);
+  if(pos<0) return ids.find(i=>i>cur) ?? -1;
+  if(grpN()>1){
+    const start=Math.max(0,ids.indexOf(grpStart));
+    if(pos-start+1<grpN() && pos+1<ids.length) return ids[pos+1];
+    grpPlayed++;
+    if(grpPlayed<grpR()) return ids[start];
+    grpStart=ids[pos+1] ?? -1; grpPlayed=0;
   }
-  return -1;
+  return ids[pos+1] ?? -1;
 }
 function play(i,keep){
   clearTimeout(timer);
   if(i<0||i>=NROW){stop();return;}
   cur=i; played=0; stagePhase=0; dictPhase=0;
+  if(practice()==='stage' && keep){setMode('none');reveal(i,false);}
   if(!keep) mode='once';
   resetBtns(); mark(i); save();
   const b=btnOf(i); if(b)b.textContent='■';
   aud.src='data:audio/mpeg;base64,'+CLIPS[i];
   aud.playbackRate=parseFloat($id('rate').value);
-  aud.loop=(repN()===-1);
+  aud.loop=false;  // 通过 onEnded 循环，才能记录已练并保留句间间隔
   aud.onended=onEnded;
   aud.play().catch(()=>{});
   if(practice()==='dict') showDictBar(i); else hideDictBar();
 }
 function onEnded(){
+  if(cur<0 || !ROWS[cur])return;
   played++;
   ROWS[cur].classList.add('heard'); ST.heard.add(cur); updProg(); save();
   const N=repN();
-  if(N>0 && played<N){                       // 本句还要再播一遍
+  if(N===-1 || (N>0 && played<N)){                       // 本句还要再播一遍
     timer=setTimeout(()=>{aud.currentTime=0;aud.play().catch(()=>{});},gapMs());
     return;
   }
@@ -418,8 +423,10 @@ function nextStep(){
   const nx=nextIndex();
   if(nx>=0){ timer=setTimeout(()=>play(nx,true),gapMs()); return; }
   if(loopRng && mode!=='once'){          // 循环整个范围
-    grpStart=rngFrom; grpPlayed=0;
-    timer=setTimeout(()=>play(rngFrom,true),Math.max(gapMs(),350));
+    const first=playableIndices(mode==='range')[0];
+    if(first===undefined){stop();return;}
+    grpStart=first; grpPlayed=0;
+    timer=setTimeout(()=>play(first,true),Math.max(gapMs(),350));
     return;
   }
   mode='once'; updProg();
@@ -430,13 +437,17 @@ function stop(){
   cur=-1; mode='once'; stagePhase=0; updProg(); save(); hideDictBar();
 }
 function togglePlay(){
-  if(cur<0){play(0);return;}
+  if(cur<0){const first=playableIndices()[0];if(first!==undefined)play(first);return;}
   if(!aud.paused){aud.pause();const b=btnOf(cur);if(b)b.textContent='▶';return;}
   if(aud.currentTime>0.05&&aud.currentTime<aud.duration-0.05){aud.play().catch(()=>{});return;}
   play(cur);
 }
 function step(d){
-  const n = cur<0 ? 0 : Math.min(NROW-1, Math.max(0, cur+d));
+  const ids=playableIndices();
+  if(!ids.length){stop();return;}
+  const pos=ids.indexOf(cur);
+  const n=cur<0 ? ids[0] : pos>=0 ? ids[Math.max(0,Math.min(ids.length-1,pos+d))] :
+    (d>0 ? ids.find(i=>i>cur) ?? ids.at(-1) : ids.findLast(i=>i<cur) ?? ids[0]);
   play(n);
 }
 function startChain(loop){
@@ -447,8 +458,10 @@ function startChain(loop){
   const lb=$id('loopRange');
   lb.classList.toggle('grn',loopRng);
   lb.textContent = loopRng ? '↻ 循环区间（开）' : '↻ 循环区间';
-  grpStart=rngFrom; grpPlayed=0;
-  play(rngFrom,true);
+  const first=playableIndices(true)[0];
+  if(first===undefined){stop();flash($id('playRange'),'没有可播放的句子');return;}
+  grpStart=first; grpPlayed=0;
+  play(first,true);
   save();
 }
 
@@ -478,7 +491,7 @@ function diffAns(a,b){                       // a: 原文, b: 用户
   }
   while(i<n){out.push('<span class="miss">'+A[i++]+'</span>');}
   while(j<m){out.push('<span class="bad">'+B[j++]+'</span>');}
-  const score=Math.round(right/Math.max(n,1)*100);
+  const score=Math.round(right/Math.max(n,m,1)*100);
   return {html:out.join(' '), score:score, right:right, total:n};
 }
 function dictSubmit(){
@@ -486,7 +499,7 @@ function dictSubmit(){
   const mine=$id('dictIn').value;
   const truth=ROWS[cur].dataset.t||'';
   const r=diffAns(truth,mine);
-  $id('dictRes').innerHTML='<div>正确率 <b>'+r.score+'%</b>（'+r.right+'/'+r.total+' 词）· 删除线为你写错的，橙色底线为漏听的词</div><div>'+r.html+'</div>';
+  $id('dictRes').innerHTML='<div>正确率 <b>'+r.score+'%</b>（原文匹配 '+r.right+'/'+r.total+' 词）· 删除线为你写错的，橙色底线为漏听的词</div><div>'+r.html+'</div>';
   reveal(cur,true);
   $id('dictHint').textContent='按回车进入下一句，或点「跳过看下句」';
 }
@@ -561,24 +574,27 @@ function zipFiles(files){                    // files: [{name, data:Uint8Array}]
   return new Blob([...chunks,...central,eocd],{type:'application/zip'});
 }
 const pad=n=>String(n).padStart(3,'0');
+const FILE_BASE=Array.from(document.title,c=>[47,92,58,42,63,34,60,62,124].includes(c.charCodeAt(0))?'_':c).join('').trim()||'逐句精听';
+const escapeHTML=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 function exportZip(){
   const files=[];
-  const rows=[['序号','Audio','English','中文','板块','说话人']];
+  const rows=[];
   ROWS.forEach((r,i)=>{
     const en=(r.querySelector('.en')||{}).textContent||'';
     const cne=(r.querySelector('.cn')||{}).textContent||'';
     const sec=r.closest('.grp').querySelector('h2').dataset.sec||'';
     const spk=(r.querySelector('.bd')||{}).textContent||'';
-    const fn='clip_'+pad(i+1)+'.mp3';
+    const fn=KEY+'_'+pad(i+1)+'.mp3';
     files.push({name:fn,data:stripID3(b64ToBytes(CLIPS[i]))});
-    rows.push([pad(i+1),'<audio src="'+fn+'">',en,cne,sec,spk]);
+    rows.push([KEY+'_'+pad(i+1),'[sound:'+fn+']',escapeHTML(en)+(cne?'<br>'+escapeHTML(cne):''),en,cne,sec,spk]);
   });
-  const csv='\\uFEFF'+rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\\r\\n');
+  const csv='\\uFEFF#separator:Comma\\r\\n#html:true\\r\\n#columns:序号,Audio,Back,English,中文,板块,说话人\\r\\n'+rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\\r\\n');
   files.push({name:'README-Anki-import.txt',data:new TextEncoder().encode(
-    '1) 解压本 zip，把里面所有 mp3 和 anki_cards.csv 放进 Anki 的 collection.media 文件夹\\r\\n'+
-    '   （Anki → 工具 → 附加组件 / 或直接打开 profile 目录下的 collection.media）\\r\\n'+
-    '2) Anki → 文件 → 导入，选 anki_cards.csv，字段映射：正面=Audio，背面=English+中文\\r\\n'+
-    '3) 卡片的音频字段已写成 <audio src="...">，导入后即可发音\\r\\n')});
+    '1) 解压 ZIP，将 MP3 复制到当前 Anki profile 的 collection.media 文件夹。\\r\\n'+
+    '2) 在 Anki 中导入 anki_cards.csv，选用 Basic（基础）笔记类型。\\r\\n'+
+    '3) 字段映射：Audio → Front（正面），Back → Back（背面）；其余列忽略。\\r\\n'+
+    '4) 保留“允许字段包含 HTML”；声音字段使用 Anki 原生 [sound:文件名]。\\r\\n'+
+    '5) 先预览一张卡，确认声音和中英文显示正确。\\r\\n')});
   files.push({name:'anki_cards.csv',data:new TextEncoder().encode(csv)});
   download(zipFiles(files),'listening-anki-pack.zip');
   flash($id('dlZip'),'已导出');
@@ -588,7 +604,7 @@ function exportRange(){
   if(!m){flash($id('dlRange'),'先选范围');return;}
   if(m.length>25e6){flash($id('dlRange'),'范围太大');return;}
   download(new Blob([m],{type:'audio/mpeg'}),
-           'CET6-'+pad(rngFrom+1)+'-'+pad(rngTo+1)+'.mp3');
+           FILE_BASE+'-'+pad(rngFrom+1)+'-'+pad(rngTo+1)+'.mp3');
   flash($id('dlRange'),'已保存');
 }
 function exportTxt(){
@@ -601,7 +617,7 @@ function exportTxt(){
     lines.push(pad(i+1)+'. '+en+(cne?('     '+cne):''));
   });
   download(new Blob([lines.join('\\n')],{type:'text/plain;charset=utf-8'}),
-           'CET6-2024-12-第一套-中英对照.txt');
+           FILE_BASE+'-中英对照.txt');
   flash($id('dlTxt'),'已保存');
 }
 function applyFilter(){
@@ -628,7 +644,7 @@ function flash(btn,txt){
 function starRange(){
   if(!rangeActive){flash($id('starAll'),'先选范围');return;}
   for(let i=rngFrom;i<=rngTo;i++){ROWS[i].classList.add('star');ST.star.add(i);}
-  save(); updProg(); flash($id('starAll'),'已星标');
+  save(); applyFilter(); flash($id('starAll'),'已星标');
 }
 
 /* ---------- 模式 ---------- */
@@ -651,6 +667,7 @@ document.querySelectorAll('#modes button').forEach(b=>b.onclick=()=>setMode(b.da
   $id('autoRev').checked=!!s.autoRev;
   $id('grpSize').value=s.grpSize; $id('grpRep').value=s.grpRep;
   $id('practice').value=s.prat;
+  document.body.classList.toggle('pm-stage',s.prat==='stage');
   setInput('fromN',s.from); setInput('toN',s.to); useRange('from');
   loopRng=!!s.loop; rangeActive=false; paintRange();
   const lb=$id('loopRange'); lb.classList.toggle('grn',loopRng);
@@ -762,7 +779,7 @@ $id('wipe').onclick=()=>{
   ST=blankState();
   try{localStorage.removeItem(KEY);}catch(e){}
   ROWS.forEach(r=>{r.classList.remove('star','heard','rev','cn-on');});
-  updProg(); flash($id('wipe'),'已清空');
+  applyFilter(); flash($id('wipe'),'已清空');
 };
 $id('fold').onclick=e=>{
   const p=document.querySelector('.panel');
@@ -777,9 +794,9 @@ $id('dictOk').onclick=dictSubmit;
 $id('dictSkip').onclick=()=>{step(1);};
 $id('dictTip').onclick=()=>{
   if(cur<0)return;
-  const truth=tok(ROWS[cur].dataset.t||'');
-  const got=tok($id('dictIn').value);
-  const next=truth.find(w=>!got.includes(w));
+  const result=document.createElement('div');
+  result.innerHTML=diffAns(ROWS[cur].dataset.t||'',$id('dictIn').value).html;
+  const next=result.querySelector('.miss')?.textContent;
   if(next){$id('dictIn').value=($id('dictIn').value+' '+next).trim();}
 };
 $id('dictIn').addEventListener('keydown',e=>{

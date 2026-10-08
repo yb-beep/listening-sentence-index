@@ -10,6 +10,7 @@
     config.json         记录源音频路径、标题等，后续步骤自动读取
 """
 import argparse
+import hashlib
 import json
 import os
 
@@ -47,7 +48,7 @@ def get_args(desc="", need_audio=True):
     p.add_argument("--model", default=None,
                    help="whisper 模型名，默认 large-v3-turbo（快且够准）；"
                         "想要极致准确率用 large-v3，慢机器用 small / medium")
-    p.add_argument("--lang", default="en", help="音频语言代码，默认 en")
+    p.add_argument("--lang", default=None, help="音频语言代码，首次默认 en，后续沿用配置")
     p.add_argument("--out", default=None, help="输出文件名（覆盖默认）")
     p.add_argument("--restart", action="store_true",
                    help="忽略已有产物/进度，从头重做")
@@ -59,6 +60,7 @@ def get_args(desc="", need_audio=True):
                    help="批量推理的批大小，默认 8；内存紧张可调小到 2~4")
     p.add_argument("--jobs", type=int, default=2,
                    help="并行跑几个转写进程，默认 2；核多可加到 3~4，内存小就设 1")
+    p.add_argument("--check", action="store_true", help="只检查译文缺项，不写入合并结果")
     a = p.parse_args()
     a.work = os.path.abspath(os.path.expanduser(a.work))
     os.makedirs(a.work, exist_ok=True)
@@ -75,7 +77,7 @@ def get_args(desc="", need_audio=True):
     for k in ("audio", "ref", "title", "model", "lang"):
         v = getattr(a, k, None)
         if v:
-            cfg[k] = v
+            cfg[k] = os.path.abspath(os.path.expanduser(v)) if k in ("audio", "ref") else v
     a.audio = os.path.abspath(os.path.expanduser(cfg["audio"])) if cfg.get("audio") else None
     if need_audio and not a.audio:
         p.error("需要 --audio 指定源音频（或先跑 transcribe.py 写入 config.json）")
@@ -84,6 +86,7 @@ def get_args(desc="", need_audio=True):
     if not getattr(a, "model", None):
         a.model = cfg.get("model") or "large-v3-turbo"   # 默认用 turbo，比 large-v3 快数倍
     a.ref = os.path.abspath(os.path.expanduser(cfg["ref"])) if cfg.get("ref") else None
+    a.lang = cfg.get("lang") or "en"
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=1)
     return a
@@ -105,24 +108,37 @@ def save_sentences(work, d):
 
 def load_all(src):
     """解码整段音频 -> int16 ndarray (channels, samples), 采样率, 声道布局"""
-    container = av.open(src)
-    stream = container.streams.audio[0]
-    sr = stream.rate
-    layout = stream.layout.name if stream.layout else "stereo"
-    chunks = []
-    for frame in container.decode(stream):
-        chunks.append(frame.to_ndarray())
+    with av.open(src) as container:
+        if not container.streams.audio:
+            raise ValueError("输入文件没有音轨")
+        stream = container.streams.audio[0]
+        sr = stream.rate
+        channels = len(stream.layout.channels) if stream.layout else 2
+        layout = "mono" if channels == 1 else "stereo"
+        # WAV 常为 s16，MP3 常为 fltp；统一转换到 planar int16，避免
+        # 把原本已是 int16 的 PCM 再乘 32767，同时正确处理交错声道。
+        resampler = av.AudioResampler(format="s16p", layout=layout, rate=sr)
+        chunks = []
+        for frame in container.decode(stream):
+            chunks.extend(f.to_ndarray() for f in resampler.resample(frame))
+        chunks.extend(f.to_ndarray() for f in resampler.resample(None))
+    if not chunks:
+        raise ValueError("输入音频为空，无法制作精听材料")
     data = np.concatenate(chunks, axis=1)
-    container.close()
-    data = np.clip(data * 32767.0, -32768, 32767).astype(np.int16)
     return data, sr, layout
 
 
 def compute_rms(mono, sr, win=0.010, k=5):
     """逐窗 RMS 能量曲线，win=10ms"""
     w = max(1, int(sr * win))
+    win = w / sr  # 22050Hz 等采样率下整数窗不等于精确 10ms，避免长音频时间漂移
     n = len(mono) // w
+    if not len(mono):
+        return np.empty(0, dtype=np.float32), win
+    if not n:
+        return np.array([float(np.sqrt(np.mean(mono ** 2)))], dtype=np.float32), win
     rms = np.sqrt((mono[:n * w].reshape(n, w) ** 2).mean(axis=1))
+    k = min(k, n)
     rms = np.convolve(rms, np.ones(k) / k, mode="same")
     return rms, win
 
@@ -195,3 +211,12 @@ def slug(s):
     for c in bad:
         s = s.replace(c, "_")
     return s.strip() or "index"
+
+
+def storage_key(title, sentences):
+    """同一份材料稳定，不同中文标题、原文或时间轴各自保存练习记录。"""
+    identity = {"title": title, "sentences": [
+        [s.get("text"), s.get("start"), s.get("end")] for s in sentences]}
+    digest = hashlib.sha256(json.dumps(identity, ensure_ascii=False,
+                                      sort_keys=True).encode("utf-8")).hexdigest()
+    return "lsi_" + digest[:24]

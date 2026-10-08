@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # noqa: E402
 import common  # noqa: E402  导入即打上 av 兼容补丁
 
 from faster_whisper import WhisperModel  # noqa: E402
+from transcribe import MODEL_ALIAS  # noqa: E402
 
 WORD = re.compile(r"[a-z']+")
 
@@ -30,7 +31,9 @@ def main():
 
     ids = os.environ.get("VERIFY_IDS", "")
     pick = sorted({int(x) for x in ids.split(",") if x.strip()}) if ids else list(range(1, len(sents) + 1))
-    model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=8)
+    if any(i < 1 or i > len(sents) for i in pick):
+        raise ValueError("VERIFY_IDS 中的序号超出句子范围")
+    model = WhisperModel(MODEL_ALIAS.get(args.model, args.model), device="cpu", compute_type="int8", cpu_threads=8)
     results = [None] * len(sents)
     for n, i in enumerate(pick, 1):
         p = f"{OUTDIR}/{i:03d}.mp3"

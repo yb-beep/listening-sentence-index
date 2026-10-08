@@ -42,11 +42,7 @@ def encode_clip(data, sr, layout, start, end, path):
 
 
 def compute_rms(mono, sr, win=0.010, k=5):
-    w = max(1, int(sr * win))
-    n = len(mono) // w
-    rms = np.sqrt((mono[:n * w].reshape(n, w) ** 2).mean(axis=1))
-    rms = np.convolve(rms, np.ones(k) / k, mode="same")
-    return rms, win
+    return common.compute_rms(mono, sr, win, k)
 
 
 def tighten(sents, rms, win, thresh=0.006, max_gap=2.5):
@@ -194,6 +190,8 @@ def main():
     d = common.load_sentences(args.work)
     sents = d["sentences"]
     total = d["duration"]
+    if not sents:
+        raise ValueError("句子时间轴为空，请先检查转写与对齐结果")
 
     print("解码源音频 ...", flush=True)
     data, sr, layout = common.load_all(args.audio)
@@ -216,7 +214,13 @@ def main():
     for i, s in enumerate(sents, 1):
         start, end = trim_silence(bounds[i - 1], bounds[i], rms_for_trim, win, peak, thresh=THR)
         path = f"{OUTDIR}/{i:03d}.mp3"
-        if not restart and os.path.exists(path) and s.get("clip_start") is not None:
+        if (not restart and os.path.exists(path) and os.path.getsize(path) > 0
+                and os.path.getmtime(path) >= max(os.path.getmtime(args.audio),
+                                                  os.path.getmtime(__file__),
+                                                  os.path.getmtime(common.__file__))
+                and s.get("clip_start") == round(start, 3)
+                and s.get("clip_end") == round(end, 3)):
+            s["file"] = f"{i:03d}.mp3"
             skipped += 1
             if i % 50 == 0:
                 print(f"  {i}/{len(sents)}", flush=True)
@@ -226,6 +230,8 @@ def main():
             s["clip_start"] = round(start, 3)
             s["clip_end"] = round(end, 3)
             ok += 1
+        else:
+            raise ValueError(f"第 {i} 句的音频区间无效：{start:.3f}–{end:.3f}s")
         if i % 50 == 0:
             print(f"  {i}/{len(sents)}", flush=True)
 
