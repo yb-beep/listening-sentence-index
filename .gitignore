@@ -1,0 +1,27 @@
+# 中间产物与输出
+audio_sentences/
+_tmp/
+sentences.json
+segments_raw.json
+transcribe_progress.json
+verify_asr.json
+config.json
+translations.json
+_trans_*.json
+sections.json
+*.mp3
+*.wav
+*.html
+!scripts/**/*.html
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 编辑器 / 系统
+.DS_Store
+.vscode/
+.idea/

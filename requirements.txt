@@ -1,0 +1,9 @@
+# 核心依赖（不需要 ffmpeg，用 PyAV 自带 libmp3lame）
+faster-whisper>=1.1.0
+av>=12.0.0
+numpy>=1.24
+
+# 国内安装建议：
+#   pip install -r requirements.txt -i https://mirrors.cloud.tencent.com/pypi/simple
+# 模型下载（国内必加）：
+#   export HF_ENDPOINT=https://hf-mirror.com
