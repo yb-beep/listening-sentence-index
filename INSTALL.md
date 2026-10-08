@@ -6,7 +6,7 @@ https://github.com/yb-beep/listening-sentence-index
 
 ## 复制给智能体就行
 
-> 请帮我安装这个四六级逐句精听 Skill：https://github.com/yb-beep/listening-sentence-index 。按仓库说明准备好环境；如果我还没提供音频，请提醒我提供。收到音频后，生成带英文原文和中文译文的单文件精听网页，抽查句首句尾，自动打开成品，并在桌面创建「四六级逐句精听」快捷方式，让我以后双击就能练。最后简单告诉我：怎么开始练，以及下次换音频时该发什么话。
+> 请帮我安装这个四六级逐句精听 Skill：https://github.com/yb-beep/listening-sentence-index 。优先使用我提供的安装包，否则从仓库下载；按包内说明准备好环境；如果我还没提供音频，请提醒我提供。收到音频后，生成带英文原文和中文译文的单文件精听网页，抽查句首句尾，自动打开成品，并在桌面创建「四六级逐句精听」快捷方式，让我以后双击就能练。最后简单告诉我：怎么开始练，以及下次换音频时该发什么话。
 
 发给 WorkBuddy、豆包工作或 Codex，再提供音频；有原文也一起给。以下内容是给智能体读取的下载与运行指南，读者不必先学 Git 或 Python 命令。
 
@@ -14,7 +14,9 @@ https://github.com/yb-beep/listening-sentence-index
 
 用户明确要求安装或使用本工具时，先识别所在平台、可用文件权限、终端与 Python 环境。不要假设普通网页聊天拥有本地执行能力。
 
-取得完整目录，任选可用方式：
+如果用户已经提供 Skill 压缩包，优先直接解压该包并阅读 `SKILL.md`；GitHub 无法访问时也可按此方式安装。包内 `scripts/` 已包含修复后的源码，无需另行应用补丁。
+
+没有本地安装包时，取得完整目录，任选可用方式：
 
 - 克隆 `https://github.com/yb-beep/listening-sentence-index.git`。
 - 下载 Release：`https://github.com/yb-beep/listening-sentence-index/releases/latest/download/listening-sentence-index-skill.zip`，解压保留顶层文件夹。
