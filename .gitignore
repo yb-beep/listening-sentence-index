@@ -13,7 +13,6 @@ sections.json
 *.wav
 *.html
 !scripts/**/*.html
-!docs/**/*.html
 
 # Python
 __pycache__/
